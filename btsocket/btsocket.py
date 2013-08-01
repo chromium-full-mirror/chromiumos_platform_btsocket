@@ -6,6 +6,7 @@ import logging
 import socket
 
 import _btsocket
+import constants
 
 class BluetoothSocket(socket._socketobject):
     """Socket wrapper class for Bluetooth sockets.
@@ -16,11 +17,11 @@ class BluetoothSocket(socket._socketobject):
 
     """
 
-    def __init__(self):
-        # TODO(keybuk): do we want to support other BTPROTO_* ?
-        super(BluetoothSocket, self).__init__(family=socket.AF_BLUETOOTH,
-                                              type=socket.SOCK_RAW,
-                                              proto=socket.BTPROTO_HCI)
+    def __init__(self,
+                 family=constants.AF_BLUETOOTH,
+                 type=socket.SOCK_RAW,
+                 proto=constants.BTPROTO_HCI):
+        super(BluetoothSocket, self).__init__(family, type, proto)
 
     def bind(self, *args):
         """Bind the socket.
@@ -31,10 +32,8 @@ class BluetoothSocket(socket._socketobject):
         @param channel channel to bind to, e.g. HCI_CHANNEL_RAW.
 
         """
-        if (self.family == socket.AF_BLUETOOTH and
-            self.type == socket.SOCK_RAW and
-            self.proto == socket.BTPROTO_HCI):
-            return _btsocket.bind(self, *args)
+        if self.family == constants.AF_BLUETOOTH:
+            return _btsocket.bind(self, self.proto, *args)
         else:
             return super(BluetoothSocket, self).bind(*args)
 

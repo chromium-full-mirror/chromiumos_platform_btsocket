@@ -1,4 +1,4 @@
-/* Copyright (c) 2013 The Chromium Authors. All rights reserved.
+/* Copyright (c) 2013 The Chromium OS Authors. All rights reserved.
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
@@ -10,7 +10,10 @@
 #include <poll.h>
 
 #include "bluetooth.h"
+#include "l2cap.h"
+#include "rfcomm.h"
 #include "hci.h"
+#include "sco.h"
 
 static PyObject *_btsocket_error;
 static PyObject *_btsocket_timeout;
@@ -47,23 +50,106 @@ static int _get_timeout(PyObject *socket, double *timeout) {
   return 1;
 }
 
+static int _setbdaddr(const char *straddr, bdaddr_t *bdaddr) {
+  unsigned int b0, b1, b2, b3, b4, b5;
+  int n;
+
+  n = sscanf(straddr, "%X:%X:%X:%X:%X:%X", &b5, &b4, &b3, &b2, &b1, &b0);
+  if (n == 6) {
+    bdaddr->b[0] = b0;
+    bdaddr->b[1] = b1;
+    bdaddr->b[2] = b2;
+    bdaddr->b[3] = b3;
+    bdaddr->b[4] = b4;
+    bdaddr->b[5] = b5;
+    return 1;
+  } else {
+    PyErr_SetString(_btsocket_error, "bad bluetooth address for bind()");
+    return 0;
+  }
+}
+
 static PyObject *_btsocket_bind(PyObject *self, PyObject *args) {
-  PyObject *socket_object;
-  struct sockaddr_hci addr;
-  int fd, result;
+  PyObject *socket_object, *tuple;
+  union {
+    struct sockaddr_l2 l2;
+    struct sockaddr_rc rc;
+    struct sockaddr_hci hci;
+    struct sockaddr_sco sco;
+  } addr;
+  size_t addrlen;
+  int proto, fd, result;
 
-  addr.hci_family = AF_BLUETOOTH;
-
-  if (!PyArg_ParseTuple(args, "O(HH):_btsocket.bind",
-                        &socket_object, &addr.hci_dev, &addr.hci_channel))
+  if (!PyArg_ParseTuple(args, "OiO:_btsocket.bind",
+                        &socket_object, &proto, &tuple))
     return NULL;
 
   fd = _get_fileno(socket_object);
   if (fd < 0)
     return NULL;
 
+  memset(&addr, 0, sizeof addr);
+
+  switch (proto) {
+    case BTPROTO_L2CAP: {
+      char *straddr;
+
+      addr.l2.l2_family = AF_BLUETOOTH;
+
+      if (!PyArg_ParseTuple(tuple, "si:_btsocket.bind",
+                            &straddr, &addr.l2.l2_psm))
+        return NULL;
+      if (!_setbdaddr(straddr, &addr.l2.l2_bdaddr))
+        return NULL;
+
+      addrlen = sizeof (struct sockaddr_l2);
+      break;
+    }
+    case BTPROTO_RFCOMM: {
+      char *straddr;
+
+      addr.rc.rc_family = AF_BLUETOOTH;
+
+      if (!PyArg_ParseTuple(tuple, "si:_btsocket.bind",
+                            &straddr, &addr.rc.rc_channel))
+        return NULL;
+      if (!_setbdaddr(straddr, &addr.rc.rc_bdaddr))
+        return NULL;
+
+      addrlen = sizeof (struct sockaddr_rc);
+      break;
+    }
+    case BTPROTO_HCI: {
+      addr.hci.hci_family = AF_BLUETOOTH;
+
+      if (!PyArg_ParseTuple(tuple, "HH:_btsocket.bind",
+                            &addr.hci.hci_dev, &addr.hci.hci_channel))
+        return NULL;
+
+      addrlen = sizeof (struct sockaddr_hci);
+      break;
+    }
+    case BTPROTO_SCO: {
+      char *straddr;
+
+      addr.sco.sco_family = AF_BLUETOOTH;
+
+      if (!PyArg_ParseTuple(tuple, "s:_btsocket.bind",
+                            &straddr))
+        return NULL;
+      if (!_setbdaddr(straddr, &addr.sco.sco_bdaddr))
+        return NULL;
+
+      addrlen = sizeof (struct sockaddr_sco);
+      break;
+    }
+    default:
+      PyErr_SetString(_btsocket_error, "unknown protocol for bind()");
+      return NULL;
+  }
+
   Py_BEGIN_ALLOW_THREADS;
-  result = bind(fd, (struct sockaddr *)&addr, sizeof addr);
+  result = bind(fd, (struct sockaddr *)&addr, addrlen);
   Py_END_ALLOW_THREADS;
 
   if (result < 0)
