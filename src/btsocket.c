@@ -18,6 +18,13 @@
 static PyObject *_btsocket_error;
 static PyObject *_btsocket_timeout;
 
+union bt_sockaddr {
+  struct sockaddr_l2 l2;
+  struct sockaddr_rc rc;
+  struct sockaddr_hci hci;
+  struct sockaddr_sco sco;
+};
+
 static int _get_fileno(PyObject *socket) {
   PyObject *fileno_object;
   long fileno;
@@ -69,84 +76,91 @@ static int _setbdaddr(const char *straddr, bdaddr_t *bdaddr) {
   }
 }
 
-static PyObject *_btsocket_bind(PyObject *self, PyObject *args) {
+static PyObject *parsesocketargs(PyObject *self, PyObject *args,
+                                 union bt_sockaddr *addr, size_t *addrlen) {
   PyObject *socket_object, *tuple;
-  union {
-    struct sockaddr_l2 l2;
-    struct sockaddr_rc rc;
-    struct sockaddr_hci hci;
-    struct sockaddr_sco sco;
-  } addr;
-  size_t addrlen;
-  int proto, fd, result;
+  int proto;
 
-  if (!PyArg_ParseTuple(args, "OiO:_btsocket.bind",
+  if (!PyArg_ParseTuple(args, "OiO:_btsocket.parsesocketargs",
                         &socket_object, &proto, &tuple))
     return NULL;
 
-  fd = _get_fileno(socket_object);
-  if (fd < 0)
-    return NULL;
-
-  memset(&addr, 0, sizeof addr);
+  memset(addr, 0, sizeof (union bt_sockaddr));
 
   switch (proto) {
     case BTPROTO_L2CAP: {
       char *straddr;
 
-      addr.l2.l2_family = AF_BLUETOOTH;
+      addr->l2.l2_family = AF_BLUETOOTH;
 
-      if (!PyArg_ParseTuple(tuple, "si:_btsocket.bind",
-                            &straddr, &addr.l2.l2_psm))
+      if (!PyArg_ParseTuple(tuple, "si:_btsocket.parsesocketargs",
+                            &straddr, &addr->l2.l2_psm))
         return NULL;
-      if (!_setbdaddr(straddr, &addr.l2.l2_bdaddr))
+      if (!_setbdaddr(straddr, &addr->l2.l2_bdaddr))
         return NULL;
 
-      addrlen = sizeof (struct sockaddr_l2);
+      *addrlen = sizeof (struct sockaddr_l2);
       break;
     }
     case BTPROTO_RFCOMM: {
       char *straddr;
 
-      addr.rc.rc_family = AF_BLUETOOTH;
+      addr->rc.rc_family = AF_BLUETOOTH;
 
-      if (!PyArg_ParseTuple(tuple, "si:_btsocket.bind",
-                            &straddr, &addr.rc.rc_channel))
+      if (!PyArg_ParseTuple(tuple, "si:_btsocket.parsesocketargs",
+                            &straddr, &addr->rc.rc_channel))
         return NULL;
-      if (!_setbdaddr(straddr, &addr.rc.rc_bdaddr))
+      if (!_setbdaddr(straddr, &addr->rc.rc_bdaddr))
         return NULL;
 
-      addrlen = sizeof (struct sockaddr_rc);
+      *addrlen = sizeof (struct sockaddr_rc);
       break;
     }
     case BTPROTO_HCI: {
-      addr.hci.hci_family = AF_BLUETOOTH;
+      addr->hci.hci_family = AF_BLUETOOTH;
 
-      if (!PyArg_ParseTuple(tuple, "HH:_btsocket.bind",
-                            &addr.hci.hci_dev, &addr.hci.hci_channel))
+      if (!PyArg_ParseTuple(tuple, "HH:_btsocket.parsesocketargs",
+                            &addr->hci.hci_dev, &addr->hci.hci_channel))
         return NULL;
 
-      addrlen = sizeof (struct sockaddr_hci);
+      *addrlen = sizeof (struct sockaddr_hci);
       break;
     }
     case BTPROTO_SCO: {
       char *straddr;
 
-      addr.sco.sco_family = AF_BLUETOOTH;
+      addr->sco.sco_family = AF_BLUETOOTH;
 
-      if (!PyArg_ParseTuple(tuple, "s:_btsocket.bind",
+      if (!PyArg_ParseTuple(tuple, "s:_btsocket.parsesocketargs",
                             &straddr))
         return NULL;
-      if (!_setbdaddr(straddr, &addr.sco.sco_bdaddr))
+      if (!_setbdaddr(straddr, &addr->sco.sco_bdaddr))
         return NULL;
 
-      addrlen = sizeof (struct sockaddr_sco);
+      *addrlen = sizeof (struct sockaddr_sco);
       break;
     }
     default:
-      PyErr_SetString(_btsocket_error, "unknown protocol for bind()");
+      PyErr_SetString(_btsocket_error, "unknown protocol");
       return NULL;
   }
+
+  return socket_object;
+}
+
+static PyObject *_btsocket_bind(PyObject *self, PyObject *args) {
+  PyObject *socket_object;
+  union bt_sockaddr addr;
+  size_t addrlen;
+  int fd, result;
+
+  socket_object = parsesocketargs(self, args, &addr, &addrlen);
+  if (!socket_object)
+    return NULL;
+
+  fd = _get_fileno(socket_object);
+  if (fd < 0)
+    return NULL;
 
   Py_BEGIN_ALLOW_THREADS;
   result = bind(fd, (struct sockaddr *)&addr, addrlen);
@@ -154,6 +168,68 @@ static PyObject *_btsocket_bind(PyObject *self, PyObject *args) {
 
   if (result < 0)
     return PyErr_SetFromErrno(_btsocket_error);
+
+  Py_INCREF(Py_None);
+  return Py_None;
+}
+
+static PyObject *_btsocket_connect(PyObject *self, PyObject *args) {
+  PyObject *socket_object;
+  union bt_sockaddr addr;
+  size_t addrlen;
+  int fd, timeout = 0, did_timeout = 0, result;
+  double timeout_secs;
+
+  socket_object = parsesocketargs(self, args, &addr, &addrlen);
+  if (!socket_object)
+    return NULL;
+
+  fd = _get_fileno(socket_object);
+  if (fd < 0)
+    return NULL;
+
+  timeout = _get_timeout(socket_object, &timeout_secs);
+
+  Py_BEGIN_ALLOW_THREADS;
+  result = connect(fd, (struct sockaddr *)&addr, addrlen);
+
+  if (timeout) {
+    struct pollfd pollfd;
+    int timeout_ms;
+    int n;
+
+    pollfd.fd = fd;
+    pollfd.events = POLLIN;
+
+    /* timeout limits are set by Python */
+    timeout_ms = (int)(timeout_secs * 1000);
+    n = poll(&pollfd, 1, timeout_ms);
+    if (n == 0) {
+      did_timeout = 1;
+    } else if (n < 0) {
+      result = n;
+    } else {
+      /* result from connect() is EINPROGRESS, get the real error */
+      socklen_t resultlen = sizeof result;
+      (void)getsockopt(fd, SOL_SOCKET, SO_ERROR, &result, &resultlen);
+      if (result == EISCONN)
+        result = 0;
+      else {
+        errno = result;
+        result = -1;
+      }
+    }
+  }
+  Py_END_ALLOW_THREADS;
+
+  if (did_timeout) {
+    PyErr_SetString(_btsocket_timeout, "timed out");
+    return NULL;
+  }
+  if (result < 0) {
+    PyErr_SetFromErrno(_btsocket_error);
+    return NULL;
+  }
 
   Py_INCREF(Py_None);
   return Py_None;
@@ -332,6 +408,8 @@ finally:
 static PyMethodDef _btsocket_methods[] = {
   { "bind", _btsocket_bind, METH_VARARGS,
     "Bind a Bluetooth socket to a device and channel" },
+  { "connect", _btsocket_connect, METH_VARARGS,
+    "Connect a Bluetooth socket to a remote address" },
   { "recvmsg", _btsocket_recvmsg, METH_VARARGS,
     "Receive normal and ancillary data from a Bluetooth socket" },
 

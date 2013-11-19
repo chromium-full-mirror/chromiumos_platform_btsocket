@@ -15,6 +15,25 @@ class BluetoothSocket(socket._socketobject):
     to bind to the HCI monitor and control sockets as well as receive messages
     with ancillary data from them.
 
+    The bind() and connect() functions match the behavior of those of the
+    built-in socket methods and accept a tuple defining the address, the
+    contents of which depend on the protocol of the socket.
+
+    For BTPROTO_HCI this is:
+      @param dev: Device index, or HCI_DEV_NONE.
+      @param channel: Channel, e.g. HCI_CHANNEL_RAW.
+
+    For BTPROTO_L2CAP this is:
+      @param address: Address of device in string format.
+      @param psm: PSM of L2CAP service.
+
+    For BTPROTO_RFCOMM this is:
+      @param address: Address of device in string format.
+      @param cid: Channel ID of RFCOMM service.
+
+    For BTPROTO_SCO this is:
+      @param address: Address of device in string format.
+
     """
 
     def __init__(self,
@@ -24,18 +43,18 @@ class BluetoothSocket(socket._socketobject):
         super(BluetoothSocket, self).__init__(family, type, proto)
 
     def bind(self, *args):
-        """Bind the socket.
-
-        For BTPROTO_HCI sockets args should be a tuple containing:
-
-        @param dev device index to bind to, or HCI_DEV_NONE.
-        @param channel channel to bind to, e.g. HCI_CHANNEL_RAW.
-
-        """
+        """Bind the socket to a local address."""
         if self.family == constants.AF_BLUETOOTH:
             return _btsocket.bind(self, self.proto, *args)
         else:
             return super(BluetoothSocket, self).bind(*args)
+
+    def connect(self, *args):
+        """Connect the socket to a remote address."""
+        if self.family == constants.AF_BLUETOOTH:
+            return _btsocket.connect(self, self.proto, *args)
+        else:
+            return super(BluetoothSocket, self).connect(*args)
 
     def recvmsg(self, bufsize, ancbufsize=0, flags=0):
         """Receive normal data and ancillary data from the socket.
