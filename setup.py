@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-from distutils.core import setup, Extension
+from setuptools import setup, Extension
 
 ext1 = Extension('btsocket._btsocket', sources=['src/btsocket.c'])
 
