@@ -404,6 +404,74 @@ finally:
   return retval;
 }
 
+static PyObject *_btsocket_listen_and_accept() {
+  int sk, nsk, result;
+  struct sockaddr_l2 srcaddr, addr;
+  socklen_t optlen;
+  struct bt_security btsec;
+  bdaddr_t *ba;
+  char str[18];
+
+  Py_BEGIN_ALLOW_THREADS;
+  sk = socket(AF_BLUETOOTH, SOCK_SEQPACKET, BTPROTO_L2CAP);
+  Py_END_ALLOW_THREADS;
+  if (sk < 0)
+    goto fail;
+
+  /* Set up source address */
+  memset(&srcaddr, 0, sizeof(srcaddr));
+  srcaddr.l2_family = AF_BLUETOOTH;
+  srcaddr.l2_cid = htobs(ATT_CID);
+  srcaddr.l2_bdaddr_type = BDADDR_LE_PUBLIC;
+
+  Py_BEGIN_ALLOW_THREADS;
+  result = bind(sk, (struct sockaddr *) &srcaddr, sizeof(srcaddr));
+  Py_END_ALLOW_THREADS;
+
+  if (result < 0)
+    goto fail;
+
+  /* Set the security level */
+  memset(&btsec, 0, sizeof(btsec));
+  btsec.level = BT_SECURITY_LOW;
+
+  Py_BEGIN_ALLOW_THREADS;
+  result = setsockopt(sk, SOL_BLUETOOTH, BT_SECURITY, &btsec, sizeof(btsec));
+  Py_END_ALLOW_THREADS;
+
+  if (result != 0)
+    goto fail;
+
+  Py_BEGIN_ALLOW_THREADS;
+  result = listen(sk, 10);
+  Py_END_ALLOW_THREADS;
+
+  if (result < 0)
+    goto fail;
+
+  memset(&addr, 0, sizeof(addr));
+  optlen = sizeof(addr);
+
+  Py_BEGIN_ALLOW_THREADS;
+  nsk = accept(sk, (struct sockaddr *) &addr, &optlen);
+  Py_END_ALLOW_THREADS;
+
+  if (nsk < 0)
+    goto fail;
+
+  ba = &addr.l2_bdaddr;
+  sprintf(str, "%2.2X:%2.2X:%2.2X:%2.2X:%2.2X:%2.2X",
+          ba->b[5], ba->b[4], ba->b[3], ba->b[2], ba->b[1], ba->b[0]);
+
+  close(sk);
+  return Py_BuildValue("(i,s)", nsk, str);
+
+fail:
+  if (sk >= 0)
+    close(sk);
+
+  return PyErr_SetFromErrno(_btsocket_error);
+}
 
 static PyMethodDef _btsocket_methods[] = {
   { "bind", _btsocket_bind, METH_VARARGS,
@@ -412,6 +480,8 @@ static PyMethodDef _btsocket_methods[] = {
     "Connect a Bluetooth socket to a remote address" },
   { "recvmsg", _btsocket_recvmsg, METH_VARARGS,
     "Receive normal and ancillary data from a Bluetooth socket" },
+  { "listen_and_accept", _btsocket_listen_and_accept, METH_NOARGS,
+    "Create a socket for incoming BLE connection" },
 
   { NULL, NULL, 0, NULL }
 };

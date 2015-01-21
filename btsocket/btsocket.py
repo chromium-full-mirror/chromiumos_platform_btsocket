@@ -85,3 +85,26 @@ class BluetoothSocket(socket._socketobject):
         """
         return _btsocket.recvmsg(self, buffers, ancbufsize, flags)
 
+
+def create_le_gatt_server_socket():
+    """Create a socket for incoming BLE connection.
+
+    The function creates an LE socket, then does bind, listen and accept.
+    The accept call blocks until it receives an incoming connection.
+
+    Note, that resulting socket will be standard Python socket,
+    not BluetoothSocket. It is already connected, ready for recv() and
+    send() calls, and there is no need for further setup.
+
+    Before calling this function, the machine must be set up (with appropriate
+    HCI commands) to be advertising, be powered, and have LE turned on.
+
+    @return tuple of (sock, source_address),
+      @sock is standard Python socket object, which is able to receive and send.
+      @source_address is string containing BDADDR of the connected remote.
+
+    """
+    file_descriptor, source_address = _btsocket.listen_and_accept()
+    sock = socket.fromfd(file_descriptor, constants.AF_BLUETOOTH,
+                         socket.SOCK_SEQPACKET, constants.BTPROTO_L2CAP)
+    return sock, source_address

@@ -42,6 +42,8 @@ extern "C" {
 #define PF_BLUETOOTH	AF_BLUETOOTH
 #endif
 
+#define ATT_CID	4
+
 #define BTPROTO_L2CAP	0
 #define BTPROTO_HCI	1
 #define BTPROTO_SCO	2
