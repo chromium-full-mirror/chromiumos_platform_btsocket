@@ -15,6 +15,24 @@
 #include "hci.h"
 #include "sco.h"
 
+#if PY_MAJOR_VERSION < 3
+  #define MOD_ERROR_VAL
+  #define MOD_SUCCESS_VAL(val)
+  #define MOD_INIT(name) void init##name(void)
+  #define MOD_DEF(ob, name, doc, methods) \
+          ob = Py_InitModule3(name, methods, doc);
+#else
+  #define PyInt_AS_LONG PyLong_AS_LONG
+  #define PyInt_Check PyLong_Check
+  #define MOD_ERROR_VAL NULL
+  #define MOD_SUCCESS_VAL(val) val
+  #define MOD_INIT(name) PyMODINIT_FUNC PyInit_##name(void)
+  #define MOD_DEF(ob, name, doc, methods) \
+          static struct PyModuleDef moduledef = { \
+            PyModuleDef_HEAD_INIT, name, doc, -1, methods, }; \
+          ob = PyModule_Create(&moduledef);
+#endif
+
 static PyObject *_btsocket_error;
 static PyObject *_btsocket_timeout;
 
@@ -36,7 +54,7 @@ static int _get_fileno(PyObject *socket) {
   if (!PyInt_Check(fileno_object))
     return -1;
 
-  /* PyInts are longer than your average int, truncate back to an int */
+  /* PyInt are longer than your average int, truncate back to an int */
   fileno = PyInt_AS_LONG(fileno_object);
   Py_DECREF(fileno_object);
   return (int)fileno;
@@ -486,14 +504,13 @@ static PyMethodDef _btsocket_methods[] = {
   { NULL, NULL, 0, NULL }
 };
 
-PyMODINIT_FUNC
-init_btsocket(void)
+MOD_INIT(_btsocket)
 {
   PyObject *m;
 
-  m = Py_InitModule("_btsocket", _btsocket_methods);
+  MOD_DEF(m, "_btsocket", "Bluetooth socket API", _btsocket_methods);
   if (!m)
-    return;
+    return MOD_ERROR_VAL;
 
   _btsocket_error = PyErr_NewException("btsocket.error",
                                        PyExc_OSError, NULL);
@@ -504,4 +521,6 @@ init_btsocket(void)
                                          PyExc_OSError, NULL);
   Py_INCREF(_btsocket_timeout);
   PyModule_AddObject(m, "timeout", _btsocket_timeout);
+
+  return MOD_SUCCESS_VAL(m);
 }

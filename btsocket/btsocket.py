@@ -5,10 +5,10 @@
 import logging
 import socket
 
-import _btsocket
-import constants
+from . import _btsocket
+from . import constants
 
-class BluetoothSocket(socket._socketobject):
+class BluetoothSocket(socket.socket):
     """Socket wrapper class for Bluetooth sockets.
 
     Wraps the Python socket class to implement the necessary pieces to be able
